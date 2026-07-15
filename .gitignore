@@ -5,6 +5,19 @@
 
 # dotenv files
 .env
+.env.*
+!.env.example
+
+# Local credentials and private keys
+*service-account*.json
+*-firebase-adminsdk-*.json
+*credentials*.json
+*.pem
+*.key
+*.p12
+
+# Generated temporary files
+tmp/
 
 # User-specific files
 *.rsuser

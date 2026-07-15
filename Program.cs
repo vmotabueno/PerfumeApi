@@ -1,18 +1,24 @@
-using Microsoft.EntityFrameworkCore;
-using PerfumeApi.Data;
+using Google.Api.Gax;
+using Google.Cloud.Firestore;
 using PerfumeApi.DTOs;
 using PerfumeApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
+var projectId = builder.Configuration["Firestore:ProjectId"]
+    ?? throw new InvalidOperationException("Configure Firestore:ProjectId.");
+
+builder.Services.AddFirestoreDb(options =>
+{
+    options.ProjectId = projectId;
+    options.EmulatorDetection = EmulatorDetection.EmulatorOrProduction;
+});
 
 var app = builder.Build();
 
 app.MapGet("/", () => "API de Perfumes rodando.");
 
-app.MapPost("/perfumes", async (CreatePerfumeRequest request, AppDbContext db) =>
+app.MapPost("/perfumes", async (CreatePerfumeRequest request, FirestoreDb db) =>
 {
     if (string.IsNullOrWhiteSpace(request.Nome))
         return Results.BadRequest("O campo Nome é obrigatório.");
@@ -23,29 +29,47 @@ app.MapPost("/perfumes", async (CreatePerfumeRequest request, AppDbContext db) =
     if (string.IsNullOrWhiteSpace(request.ImageUrl))
         return Results.BadRequest("O campo ImageUrl é obrigatório.");
 
-    var perfume = new Perfume
+    var perfumeDocument = new PerfumeDocument
     {
         Nome = request.Nome.Trim(),
         Marca = request.Marca.Trim(),
         ImageUrl = request.ImageUrl.Trim()
     };
 
-    db.Perfumes.Add(perfume);
-    await db.SaveChangesAsync();
+    var documentReference = await db.Collection("perfumes").AddAsync(perfumeDocument);
+    perfumeDocument.Id = documentReference.Id;
 
-    return Results.Created($"/perfumes/{perfume.Id}", perfume);
+    return Results.Created($"/perfumes/{perfumeDocument.Id}", perfumeDocument);
 });
 
-app.MapGet("/perfumes", async (AppDbContext db) =>
-    await db.Perfumes.ToListAsync());
-
-app.MapGet("/perfumes/{id:int}", async (int id, AppDbContext db) =>
+app.MapGet("/perfumes", async (FirestoreDb db) =>
 {
-    var perfume = await db.Perfumes.FindAsync(id);
+    var snapshot = await db.Collection("perfumes").GetSnapshotAsync();
+    var perfumes = snapshot.Documents
+        .Select(document =>
+        {
+            var perfume = document.ConvertTo<PerfumeDocument>();
+            perfume!.Id = document.Id;
+            return perfume;
+        })
+        .ToList();
 
-    return perfume is null
-        ? Results.NotFound()
-        : Results.Ok(perfume);
+    return Results.Ok(perfumes);
+});
+
+app.MapGet("/perfumes/{id}", async (string id, FirestoreDb db) =>
+{
+    var document = await db.Collection("perfumes").Document(id).GetSnapshotAsync();
+
+    if (!document.Exists)
+        return Results.NotFound();
+
+    var perfume = document.ConvertTo<PerfumeDocument>();
+    if (perfume is null)
+        return Results.NotFound();
+
+    perfume.Id = document.Id;
+    return Results.Ok(perfume);
 });
 
 app.Run();
